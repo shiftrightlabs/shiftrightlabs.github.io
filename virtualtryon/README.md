@@ -29,6 +29,7 @@ AI-powered virtual hair color try-on application. Upload a photo or use your cam
 - **Build Type**: Obfuscated + Offline
 - **Base Path**: `/virtualtryon/`
 - **Package Size**: ~25 MB (with models)
+- **Last Updated**: November 15, 2025 22:05
 
 ### Browser Support
 
