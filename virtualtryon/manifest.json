@@ -1,0 +1,54 @@
+{
+  "name": "Virtual Hair Color Simulator",
+  "short_name": "Hair Color",
+  "description": "Try on hair colors virtually with AI-powered segmentation. 100% client-side, privacy-first.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#9333ea",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["beauty", "lifestyle", "photo"],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Upload Photo",
+      "short_name": "Upload",
+      "description": "Upload a photo to try on hair colors",
+      "url": "/?mode=upload",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Use Camera",
+      "short_name": "Camera",
+      "description": "Use live camera to preview hair colors",
+      "url": "/?mode=camera",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}
