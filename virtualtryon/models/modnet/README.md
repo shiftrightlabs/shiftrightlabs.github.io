@@ -1,29 +1,30 @@
-# MODNet Model
+# MODNet Model - Local Deployment
 
-The MODNet model is downloaded from Hugging Face on first use and cached in the browser.
+This directory contains the MODNet model files for offline/local deployment.
 
-For offline deployment with MODNet:
+## Model Files
 
-1. **Option A: Pre-cache the model (Recommended)**
-   - Run the application once online to download the model
-   - The browser will cache it (IndexedDB)
-   - Export the cached model and include it in deployment
+The following files are included (downloaded from https://huggingface.co/Xenova/modnet):
+- `config.json` - Model configuration
+- `model.onnx` - ONNX model file (~25MB)
+- `preprocessor_config.json` - Preprocessing configuration
 
-2. **Option B: Host the model locally**
-   - Download the model from https://huggingface.co/Xenova/modnet
-   - Place ONNX files in this directory
-   - Configure Transformers.js to use local path (requires code changes)
+## Configuration
 
-3. **Option C: Use MediaPipe only**
-   - Disable MODNet option in the UI
-   - Use only MediaPipe for segmentation (no additional downloads needed)
+The application is configured to use local models by default when `VITE_USE_LOCAL_MODELS=true` is set in `.env.production`.
 
-## Model Files (if hosting locally)
+**Local Mode (Default for Production)**:
+- Models served from `/virtualtryon/models/modnet/`
+- No external downloads from Hugging Face
+- Fully offline-capable
+- Larger initial bundle size (~25MB)
 
-Required files from Hugging Face:
-- config.json
-- model.onnx
-- preprocessor_config.json
+**Remote Mode (Development)**:
+- Models downloaded from Hugging Face CDN on first use
+- Browser caches downloaded models
+- Smaller initial bundle
+- Requires internet connection on first use
 
-Note: Full offline MODNet support requires additional configuration.
-For enterprise deployments, Option C (MediaPipe only) is recommended.
+## Deployment
+
+For production builds, these model files are automatically copied to the `dist/models/modnet/` directory and served as static assets.
