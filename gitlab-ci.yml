@@ -1,0 +1,222 @@
+# GitLab CI/CD Pipeline for Azure Migrate AppCAT 7 Assessment
+# This pipeline downloads AppCAT 7 and runs OpenJDK 21 migration assessment
+
+stages:
+  - build
+  - assess
+  - report
+
+variables:
+  # AppCAT 7 download URL for Linux amd64 (x64) via aka.ms redirect
+  APPCAT_DOWNLOAD_URL: "https://aka.ms/appcat/azure-migrate-appcat-for-java-cli-linux-amd64.tar.gz"
+  # Output directory for assessment reports
+  APPCAT_OUTPUT_DIR: "appcat-reports"
+
+# Build the Java project first (optional but recommended)
+build:
+  stage: build
+  image: maven:3.9-eclipse-temurin-21
+  script:
+    - mvn clean package -DskipTests
+  artifacts:
+    paths:
+      - target/
+    expire_in: 1 hour
+  cache:
+    key: maven-cache
+    paths:
+      - .m2/repository
+
+# Run AppCAT 7 assessment for OpenJDK 21 migration
+appcat-assessment-openjdk21:
+  stage: assess
+  image: eclipse-temurin:17-jdk
+  before_script:
+    # Install required tools
+    - apt-get update && apt-get install -y wget
+    # Download AppCAT 7 CLI using wget (follows redirects properly)
+    - echo "Downloading Azure Migrate AppCAT 7..."
+    - mkdir -p /opt/appcat
+    - wget -O /tmp/appcat.tar.gz "${APPCAT_DOWNLOAD_URL}"
+    - echo "Download complete. File size:"
+    - ls -la /tmp/appcat.tar.gz
+    # Extract AppCAT (strip-components=2 because tar contains ./azure-migrate-appcat-for-java-cli-linux-amd64-x.x.x.x/)
+    - tar -xzf /tmp/appcat.tar.gz -C /opt/appcat --strip-components=2
+    - chmod +x /opt/appcat/appcat
+    - ls -la /opt/appcat/
+    # Verify installation
+    - /opt/appcat/appcat version
+  script:
+    - echo "Running AppCAT 7 assessment for OpenJDK 21 migration..."
+    - mkdir -p ${APPCAT_OUTPUT_DIR}
+    # Run the assessment targeting OpenJDK 21 (input is project root where pom.xml is located)
+    - |
+      /opt/appcat/appcat analyze \
+        --input=${CI_PROJECT_DIR} \
+        --output=${CI_PROJECT_DIR}/${APPCAT_OUTPUT_DIR} \
+        --target=openjdk21 \
+        --overwrite \
+        --disable-telemetry
+    - echo "Assessment completed. Reports generated in ${APPCAT_OUTPUT_DIR}"
+    - ls -la ${APPCAT_OUTPUT_DIR}/
+  artifacts:
+    paths:
+      - ${APPCAT_OUTPUT_DIR}/
+    expire_in: 1 week
+    when: always
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# Optional: Full assessment for Azure migration (Azure App Service + Cloud Readiness + OpenJDK 21)
+appcat-assessment-full:
+  stage: assess
+  image: eclipse-temurin:17-jdk
+  before_script:
+    - apt-get update && apt-get install -y wget
+    - echo "Downloading Azure Migrate AppCAT 7..."
+    - mkdir -p /opt/appcat
+    - wget -O /tmp/appcat.tar.gz "${APPCAT_DOWNLOAD_URL}"
+    - tar -xzf /tmp/appcat.tar.gz -C /opt/appcat --strip-components=2
+    - chmod +x /opt/appcat/appcat
+    - /opt/appcat/appcat version
+  script:
+    - echo "Running full AppCAT 7 assessment..."
+    - mkdir -p ${APPCAT_OUTPUT_DIR}-full
+    # Run comprehensive assessment with multiple targets (input is project root where pom.xml is located)
+    - |
+      /opt/appcat/appcat analyze \
+        --input=${CI_PROJECT_DIR} \
+        --output=${CI_PROJECT_DIR}/${APPCAT_OUTPUT_DIR}-full \
+        --target=openjdk21,azure-appservice,cloud-readiness \
+        --overwrite \
+        --disable-telemetry
+    - echo "Full assessment completed."
+  artifacts:
+    paths:
+      - ${APPCAT_OUTPUT_DIR}-full/
+    expire_in: 1 week
+    when: always
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# Create GitLab issue with assessment summary
+# Requires GITLAB_API_TOKEN variable with api scope (Settings > CI/CD > Variables)
+create-issue:
+  stage: report
+  image: alpine:latest
+  needs:
+    - job: appcat-assessment-openjdk21
+      artifacts: true
+  variables:
+    GIT_STRATEGY: none
+  before_script:
+    - apk add --no-cache curl jq
+  script:
+    - echo "Parsing AppCAT report..."
+    # Get the assessment job ID for artifact links
+    - |
+      ASSESS_JOB_ID=$(curl -s --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/pipelines/${CI_PIPELINE_ID}/jobs" | \
+        jq -r '.[] | select(.name == "appcat-assessment-openjdk21") | .id')
+      echo "Assessment Job ID: $ASSESS_JOB_ID"
+    # Extract summary from report.json
+    - |
+      if [ -f "${APPCAT_OUTPUT_DIR}/report.json" ]; then
+        TOTAL_ISSUES=$(jq '.summary.totalIssues // 0' ${APPCAT_OUTPUT_DIR}/report.json)
+        TOTAL_INCIDENTS=$(jq '.summary.totalIncidents // 0' ${APPCAT_OUTPUT_DIR}/report.json)
+        MANDATORY=$(jq '.summary.charts.severity.mandatory // 0' ${APPCAT_OUTPUT_DIR}/report.json)
+        OPTIONAL=$(jq '.summary.charts.severity.optional // 0' ${APPCAT_OUTPUT_DIR}/report.json)
+        POTENTIAL=$(jq '.summary.charts.severity.potential // 0' ${APPCAT_OUTPUT_DIR}/report.json)
+        INFORMATION=$(jq '.summary.charts.severity.information // 0' ${APPCAT_OUTPUT_DIR}/report.json)
+        APP_NAME=$(jq -r '.projects[0].properties.appName // "Unknown"' ${APPCAT_OUTPUT_DIR}/report.json)
+        JDK_VERSION=$(jq -r '.projects[0].properties.jdkVersion // "Unknown"' ${APPCAT_OUTPUT_DIR}/report.json)
+      else
+        TOTAL_ISSUES=0
+        TOTAL_INCIDENTS=0
+        MANDATORY=0
+        OPTIONAL=0
+        POTENTIAL=0
+        INFORMATION=0
+        APP_NAME="Unknown"
+        JDK_VERSION="Unknown"
+      fi
+    - 'echo "Total Issues: $TOTAL_ISSUES, Total Incidents: $TOTAL_INCIDENTS"'
+    # Create issue body
+    - |
+      ISSUE_BODY=$(cat <<EOF
+      ## AppCAT 7 Assessment Report - OpenJDK 21 Migration
+
+      **Pipeline:** [#${CI_PIPELINE_IID}](${CI_PIPELINE_URL})
+      **Commit:** [\`${CI_COMMIT_SHORT_SHA}\`](${CI_PROJECT_URL}/-/commit/${CI_COMMIT_SHA})
+      **Branch:** \`${CI_COMMIT_REF_NAME}\`
+      **Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+      ---
+
+      ### Application Info
+      | Property | Value |
+      |----------|-------|
+      | Application Name | ${APP_NAME} |
+      | Detected JDK Version | ${JDK_VERSION} |
+      | Target | OpenJDK 21 |
+
+      ---
+
+      ### Assessment Summary
+      | Metric | Count |
+      |--------|-------|
+      | **Total Issues** | ${TOTAL_ISSUES} |
+      | **Total Incidents** | ${TOTAL_INCIDENTS} |
+
+      ### Issues by Severity
+      | Severity | Count |
+      |----------|-------|
+      | 🔴 Mandatory | ${MANDATORY} |
+      | 🟠 Optional | ${OPTIONAL} |
+      | 🟡 Potential | ${POTENTIAL} |
+      | 🔵 Information | ${INFORMATION} |
+
+      ---
+
+      ### Download Reports
+      - 📦 **[Download Artifacts](${CI_PROJECT_URL}/-/jobs/${ASSESS_JOB_ID}/artifacts/download)** (ZIP)
+      - 📄 **[Browse Artifacts](${CI_PROJECT_URL}/-/jobs/${ASSESS_JOB_ID}/artifacts/browse/${APPCAT_OUTPUT_DIR}/)**
+      - 📊 **[View HTML Report](${CI_PROJECT_URL}/-/jobs/${ASSESS_JOB_ID}/artifacts/browse/${APPCAT_OUTPUT_DIR}/static-report/)**
+
+      ---
+
+      ### Next Steps
+      1. Download and review the HTML report in \`static-report/index.html\`
+      2. Address any **Mandatory** issues before migration
+      3. Review **Potential** issues that may affect your application
+      4. Consider **Optional** improvements for better compatibility
+
+      ---
+      *Generated by AppCAT 7 GitLab CI Pipeline*
+      EOF
+      )
+    - echo "$ISSUE_BODY"
+    # Create GitLab issue using API
+    - |
+      ISSUE_TITLE="[AppCAT] OpenJDK 21 Assessment - Pipeline #${CI_PIPELINE_IID} - ${TOTAL_ISSUES} issues found"
+      curl --fail --request POST \
+        --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        --header "Content-Type: application/json" \
+        --data "$(jq -n \
+          --arg title "$ISSUE_TITLE" \
+          --arg description "$ISSUE_BODY" \
+          --arg labels "appcat,assessment,openjdk21" \
+          '{title: $title, description: $description, labels: $labels}')" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/issues"
+    - echo "Issue created successfully!"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
